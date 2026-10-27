@@ -28,6 +28,21 @@ python3 build/build_stories.py              # data/stories.json from build/stori
 
 11 of the 931 Pexels photos are no longer on Pexels; those prompts show their palette instead.
 
+## Portfolio preview
+
+A static preview with 100 hand-picked prompts (`build/preview_ids.txt`) and a
+VQGAN+CLIP painting for each, generated with the
+[multimodalart/vqgan-clip-video](https://huggingface.co/spaces/multimodalart/vqgan-clip-video)
+Space (250 steps, the GPT-2 title as the text prompt, the prompt id as the seed).
+The recommender is rerun on just those 100; dislikes use the same relative
+distance as the notebook's positions 200–210.
+
+```sh
+pip install gradio_client
+python3 build/build_paintings.py build/preview_ids.txt paintings   # resumable; stops when the daily GPU quota runs out
+python3 build/build_preview.py build/preview_ids.txt /tmp/photos paintings ../../anjavolkova.github.io/inspo
+```
+
 ## Running locally
 
 ```sh

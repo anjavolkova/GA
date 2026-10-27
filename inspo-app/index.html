@@ -102,6 +102,13 @@ main.feed {
 }
 .pexels:hover { background: var(--paper); }
 
+.painting-card { grid-area: painting; position: relative; overflow: hidden; aspect-ratio: 1; max-width: 100%; background: var(--p3); margin: 0; }
+.painting-card img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.painting-card figcaption {
+  position: absolute; left: 10px; top: 10px; background: rgba(255,255,255,.88); color: var(--ink);
+  font-size: 11px; font-weight: 700; letter-spacing: .04em; border-radius: 8px; padding: 5px 8px;
+}
+main.feed.has-painting { grid-template-areas: "title title" "painting painting" "photo palette" "story story" "similar similar" "week week"; }
 .palette-card { grid-area: palette; padding: 16px; display: grid; align-content: space-evenly; gap: 12px; }
 .swatch { display: flex; align-items: center; gap: 14px; background: none; border: 0; padding: 0; text-align: left; border-radius: var(--r-btn); }
 .swatch i { width: clamp(52px, 13vw, 76px); aspect-ratio: 1; border-radius: var(--r-btn); flex: none; box-shadow: inset 0 0 0 1px rgba(0,0,0,.06); }
@@ -122,7 +129,7 @@ main.feed {
 .similar-list .dots { display: flex; flex: none; }
 .similar-list .dots i { width: 12px; height: 12px; border-radius: 50%; margin-left: -4px; border: 1.5px solid var(--paper); }
 .similar-list .dots i:first-child { margin-left: 0; }
-.similar-list span { min-width: 0; overflow-wrap: anywhere; }
+.similar-list span { min-width: 0; overflow-wrap: break-word; }
 .similar-note { margin: auto 0 0; padding-top: 10px; font-size: 12px; color: var(--muted); }
 
 .week-card { grid-area: week; padding: 20px; background: var(--lavender); display: flex; flex-direction: column; gap: 14px; text-align: left; font: inherit; color: var(--text); cursor: pointer; }
@@ -195,6 +202,7 @@ nav.actions {
 /* ---------- desktop ---------- */
 @media (min-width: 640px) {
   main.feed { grid-template-areas: "title title" "photo palette" "story story" "similar week"; }
+  main.feed.has-painting { grid-template-areas: "title title" "painting painting" "photo palette" "story story" "similar week"; }
 }
 @media (min-width: 980px) {
   main.feed {
@@ -206,6 +214,15 @@ nav.actions {
       "story story similar week";
     padding-top: 26px;
   }
+  main.feed.has-painting {
+    grid-template-rows: minmax(200px, auto) minmax(200px, auto) auto auto;
+    grid-template-areas:
+      "title title painting palette"
+      "title title painting palette"
+      "story story photo similar"
+      "story story photo week";
+  }
+  .painting-card { aspect-ratio: auto; min-height: 0; }
   .title-card { min-height: 0; }
   .photo-card { aspect-ratio: auto; }
   .story-card { padding: 28px 32px 30px; }
@@ -321,6 +338,10 @@ nav.actions {
       <span class="liked-flag" id="likedFlag" hidden>Liked</span>
       <h2 class="prompt-title" id="title">Loading prompts…</h2>
     </section>
+    <figure class="card painting-card" id="paintingCard" hidden>
+      <img id="painting" alt="">
+      <figcaption>VQGAN+CLIP</figcaption>
+    </figure>
     <figure class="card photo-card" id="photoCard" style="margin:0">
       <img id="photo" alt="" hidden>
       <div class="nophoto" id="nophoto">Loading photo…</div>
@@ -511,6 +532,7 @@ nav.actions {
     if (!p.p) return null;
     const pack = photoIndex[p.p];
     if (pack == null) return null;
+    if (typeof pack === "string") return pack;  // a plain image file
     if (!packs.has(pack)) packs.set(pack, fetch("data/photos-" + pack + ".json").then((r) => r.json()).catch(() => ({})));
     return (await packs.get(pack))[p.p] || null;
   }
@@ -560,6 +582,9 @@ nav.actions {
 
     $("altLine").textContent = p.a ? "Photo: " + p.a : "";
     renderSimilar(p);
+    const pc = $("paintingCard");
+    pc.hidden = !p.g; $("feed").classList.toggle("has-painting", !!p.g);
+    if (p.g) { $("painting").src = p.g; $("painting").alt = "AI painting generated from the title " + p.t; }
     renderStory(p);
     renderButtons();
   }
@@ -818,7 +843,7 @@ nav.actions {
   async function openExport(p) {
     exportFor = p;
     $("copyFallback").hidden = true;
-    $("saveCard").hidden = !downloads;
+    $("saveCard").hidden = !downloads && !!window.claude;
     $("exportSheet").hidden = false;
     $("copyPrompt").focus({ preventScroll: true });
     await drawPostcard(p);
@@ -830,9 +855,13 @@ nav.actions {
     if (!(await copyText(text, "Prompt copied"))) { const t = $("copyFallback"); t.value = text; t.hidden = false; t.focus(); t.select(); toast("Select the text to copy it"); }
   };
   $("saveCard").onclick = async () => {
-    if (!downloads || !exportFor) return;
+    if (!exportFor) return;
     const blob = await new Promise((r) => $("postcard").toBlob(r, "image/png"));
     const name = "inspo-" + exportFor.t.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) + ".png";
+    if (!downloads) {  // outside claude.ai: a normal browser download
+      const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 5000); return;
+    }
     try { await downloads.save({ filename: name, data: blob }); }
     catch (e) { if (e && e.code !== "cancelled" && e.code !== "declined") toast("The postcard wasn't saved."); }
   };
