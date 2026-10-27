@@ -16,6 +16,8 @@ from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
 ROOT = Path(__file__).resolve().parents[2]
+# Prompts left out of the app (the recommender still runs on the full database)
+EXCLUDE = {759}  # "Hood Childrens Holiday Track"
 OUT = Path(__file__).resolve().parents[1] / "data" / "prompts.json"
 
 pexelsdf = pd.read_csv(ROOT / "colorstitlespexelsdf.csv", index_col=0)
@@ -30,11 +32,13 @@ cosine_sim1 = cosine_similarity(count_matrix1, count_matrix1)
 
 def neighbours(index, start, stop):
     sim_scores = sorted(enumerate(cosine_sim1[index]), key=lambda x: x[1], reverse=True)
-    return [int(i) for i, _ in sim_scores[start:stop] if i != index]
+    return [int(i) for i, _ in sim_scores[start:stop] if i != index and i not in EXCLUDE]
 
 
 prompts = []
 for i, row in pexelsdf.iterrows():
+    if i in EXCLUDE:
+        continue
     url = row["url"] if isinstance(row["url"], str) else ""
     m = re.search(r"-(\d+)/?$", url)
     prompts.append({
