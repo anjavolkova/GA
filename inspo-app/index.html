@@ -456,7 +456,7 @@ nav.actions {
     current: null,
     queue: local.get("queue", []),
     seen: new Set(local.get("seen", [])),
-    liked: [],            // [{id, at}]
+    liked: [],            // [id], newest first
     disliked: [],         // [id]
     done: {},             // {"YYYY-MM-DD": [id]}
     stories: {},          // {id: text}, one written plot per prompt
@@ -465,7 +465,27 @@ nav.actions {
   // ---------- persistence: per-person db when on claude.ai, else this browser ----------
   let store = null;       // {ref, storyCol}
   let writeChain = Promise.resolve();
-  function saved() { return { liked: S.liked, disliked: S.disliked, done: S.done }; }
+  // Stored as flat lists of numbers and strings so any store keeps them as-is;
+  // done is saved as "YYYY-MM-DD|id" entries and rebuilt into a map on load.
+  function saved() {
+    const done = [];
+    for (const [k, list] of Object.entries(S.done)) for (const id of list) done.push(k + "|" + id);
+    return { liked: S.liked, disliked: S.disliked, done };
+  }
+  function idList(v) {
+    const arr = Array.isArray(v) ? v : v && typeof v === "object" ? Object.values(v) : [];
+    return [...new Set(arr.map((x) => Number(x && typeof x === "object" ? x.id : x)).filter(Number.isFinite))];
+  }
+  function doneMap(v) {
+    const out = {};
+    const add = (k, id) => { id = Number(id); if (/^\d{4}-\d{2}-\d{2}$/.test(k) && Number.isFinite(id)) (out[k] = out[k] || []).includes(id) || out[k].push(id); };
+    if (Array.isArray(v)) for (const e of v) { const [k, id] = String(e).split("|"); add(k, id); }
+    else if (v && typeof v === "object") for (const [k, ids] of Object.entries(v)) for (const id of idList(ids)) add(k, id);
+    return out;
+  }
+  function restore(d) {
+    S.liked = idList(d && d.liked); S.disliked = idList(d && d.disliked); S.done = doneMap(d && d.done);
+  }
   function persist() {
     local.set("state", saved());
     if (!store) return;
@@ -474,13 +494,13 @@ nav.actions {
   }
   function loadLocal() {
     const st = local.get("state", null);
-    if (st) Object.assign(S, { liked: st.liked || [], disliked: st.disliked || [], done: st.done || {} });
+    if (st) restore(st);
   }
 
   // ---------- helpers ----------
   const today = () => dayKey(new Date());
   function dayKey(d) { return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); }
-  const isLiked = (id) => S.liked.some((l) => l.id === id);
+  const isLiked = (id) => S.liked.includes(id);
   const doneToday = (id) => (S.done[today()] || []).includes(id);
   const pal = (p) => { const c = p.c.slice(0, 4); while (c.length < 4) c.push(c[c.length - 1] || "#E9E4F7"); return c; };
   let toastTimer;
@@ -585,9 +605,9 @@ nav.actions {
   function like() {
     const p = S.current; if (!p) return;
     if (isLiked(p.id)) { // second tap removes it, stays on the prompt
-      S.liked = S.liked.filter((l) => l.id !== p.id); persist(); renderButtons(); toast("Removed from liked prompts"); return;
+      S.liked = S.liked.filter((x) => x !== p.id); persist(); renderButtons(); toast("Removed from liked prompts"); return;
     }
-    S.liked.unshift({ id: p.id, at: Date.now() });
+    S.liked.unshift(p.id);
     S.disliked = S.disliked.filter((d) => d !== p.id);
     S.queue = [...p.up, ...S.queue.filter((x) => !p.up.includes(x))];
     persist(); toast("Saved to your profile. More like this coming up.");
@@ -596,7 +616,7 @@ nav.actions {
   function dislike() {
     const p = S.current; if (!p) return;
     if (!S.disliked.includes(p.id)) S.disliked.push(p.id);
-    S.liked = S.liked.filter((l) => l.id !== p.id);
+    S.liked = S.liked.filter((x) => x !== p.id);
     const near = new Set(p.up);
     S.queue = [...p.down, ...S.queue.filter((x) => !near.has(x) && !p.down.includes(x))];
     persist(); toast("You'll see fewer prompts like this.");
@@ -612,10 +632,12 @@ nav.actions {
   }
   function pulse(id) { const b = $(id); b.classList.remove("spin"); void b.offsetWidth; if (id === "refreshBtn") b.classList.add("spin"); }
 
-  $("likeBtn").onclick = like;
-  $("dislikeBtn").onclick = dislike;
-  $("refreshBtn").onclick = refresh;
-  $("doneBtn").onclick = () => toggleDone();
+  // If saving or redrawing fails, still move on to the next prompt
+  const guard = (fn, moveOn) => () => { try { fn(); } catch (e) { console.error(e); if (moveOn) { try { advance(); } catch {} } } };
+  $("likeBtn").onclick = guard(like, true);
+  $("dislikeBtn").onclick = guard(dislike, true);
+  $("refreshBtn").onclick = guard(refresh, true);
+  $("doneBtn").onclick = guard(() => toggleDone(), false);
   $("exportBtn").onclick = () => S.current && openExport(S.current);
   $("palette").addEventListener("click", (e) => { const b = e.target.closest(".swatch"); if (b) copyText(b.dataset.hex, "Copied " + b.dataset.hex); });
 
@@ -626,10 +648,10 @@ nav.actions {
       return;
     }
     if (/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
-    if (e.key === "ArrowRight") { e.preventDefault(); like(); }
-    else if (e.key === "ArrowLeft") { e.preventDefault(); dislike(); }
-    else if (e.key === " " && e.target.tagName !== "BUTTON") { e.preventDefault(); refresh(); }
-    else if (e.key.toLowerCase() === "d") toggleDone();
+    if (e.key === "ArrowRight") { e.preventDefault(); guard(like, true)(); }
+    else if (e.key === "ArrowLeft") { e.preventDefault(); guard(dislike, true)(); }
+    else if (e.key === " " && e.target.tagName !== "BUTTON") { e.preventDefault(); guard(refresh, true)(); }
+    else if (e.key.toLowerCase() === "d") guard(() => toggleDone(), false)();
   });
   function closeAll() { for (const id of ["onboard", "profile", "detail", "exportSheet"]) if (!$(id).hidden) { if (id === "onboard") finishTour(); else $(id).hidden = true; } }
 
@@ -685,8 +707,8 @@ nav.actions {
     if (!S.liked.length) {
       wrap.innerHTML = `<div class="empty">Nothing here yet. Tap the thumbs up on a prompt you like and it will be saved here.</div>`;
     } else {
-      wrap.innerHTML = `<div class="liked-list">${S.liked.map((l) => {
-        const p = byId.get(l.id); if (!p) return "";
+      wrap.innerHTML = `<div class="liked-list">${S.liked.map((id) => {
+        const p = byId.get(id); if (!p) return "";
         const done = Object.values(S.done).some((ids) => ids.includes(p.id));
         return `<button class="liked-item" data-id="${p.id}"><div class="strip">${pal(p).map((h) => `<i style="background:${h}"></i>`).join("")}</div><span>${esc(p.t)}${done ? "<small>Completed</small>" : ""}</span></button>`;
       }).join("")}</div>`;
@@ -749,9 +771,9 @@ nav.actions {
     $("detail").hidden = false; $("detail").scrollTop = 0;
     $("detailClose").focus({ preventScroll: true });
     $("detailClose").onclick = () => { $("detail").hidden = true; renderProfile(); };
-    $("dDone").onclick = () => { toggleDone(p.id); $("dDone").setAttribute("aria-pressed", String(doneToday(p.id))); };
+    $("dDone").onclick = guard(() => { toggleDone(p.id); $("dDone").setAttribute("aria-pressed", String(doneToday(p.id))); }, false);
     $("dExport").onclick = () => openExport(p);
-    $("dUnlike").onclick = () => { S.liked = S.liked.filter((l) => l.id !== p.id); persist(); $("detail").hidden = true; renderProfile(); toast("Removed from liked prompts"); };
+    $("dUnlike").onclick = () => { S.liked = S.liked.filter((x) => x !== p.id); persist(); $("detail").hidden = true; renderProfile(); toast("Removed from liked prompts"); };
     const src = await photoFor(p);
     if (src && !$("detail").hidden) { const d = $("dPhoto"); d.innerHTML = `<img src="${src}" alt="${esc(p.a || "")}">`; d.hidden = false; }
   }
@@ -852,7 +874,7 @@ nav.actions {
             const snap = await ref.get();
             if (snap.exists) {
               const d = snap.data() || {};
-              S.liked = d.liked || []; S.disliked = d.disliked || []; S.done = d.done || {};
+              restore(d);
             } else if (S.liked.length || Object.keys(S.done).length) {
               await ref.set(saved());   // first visit on this account: keep what this browser had
             }
