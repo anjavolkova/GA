@@ -6,7 +6,9 @@ image can be regenerated. Images already in the output folder are skipped,
 and the run stops cleanly when the daily GPU quota runs out, so rerunning
 continues where it left off.
 
-    python3 build/build_paintings.py build/preview_ids.txt OUT_DIR [STEPS, default 250]
+    python3 build/build_paintings.py build/preview_ids.txt OUT_DIR [STEPS, default 250] [MAX_IMAGES]
+
+MAX_IMAGES caps one run, to stay inside the daily free GPU quota.
 """
 import io
 import json
@@ -20,12 +22,14 @@ from PIL import Image
 DATA = Path(__file__).resolve().parents[1] / "data"
 ids_file, out_dir = Path(sys.argv[1]), Path(sys.argv[2])
 steps = int(sys.argv[3]) if len(sys.argv) > 3 else 250
+max_images = int(sys.argv[4]) if len(sys.argv) > 4 else None
 out_dir.mkdir(parents=True, exist_ok=True)
 
 prompts = {p["id"]: p for p in json.loads((DATA / "prompts.json").read_text())["prompts"]}
 ids = [int(l) for l in ids_file.read_text().split() if l.strip().isdigit()]
-todo = [i for i in ids if not (out_dir / f"{i}.webp").exists()]
-print(f"{len(ids) - len(todo)} done, {len(todo)} to go", flush=True)
+todo = [i for i in ids if not (out_dir / f"{i}.webp").exists()][:max_images]
+done = sum((out_dir / f"{i}.webp").exists() for i in ids)
+print(f"{done} of {len(ids)} done, making {len(todo)} this run", flush=True)
 
 client = Client("multimodalart/vqgan-clip-video", verbose=False)
 for n, pid in enumerate(todo, 1):
